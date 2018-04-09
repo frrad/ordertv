@@ -7,7 +7,6 @@ import (
 	"os"
 	"regexp"
 	"strconv"
-	"strings"
 )
 
 type dirRule struct {
@@ -44,44 +43,7 @@ func makeFileRules(names []string) []dirRule {
 	return generate(generators, names)
 }
 
-func simpleGen(name string) dirRule {
-	clean := strings.Replace(name, " ", ".", -1)
-
-	thisRe := regexp.MustCompile("(?i)^" + clean + ".*S([0-9]+).*$")
-
-	return dirRule{
-		regex: thisRe,
-		name:  name,
-		score: 10,
-	}
-}
-
-func easyFileGen(name string) dirRule {
-	clean := strings.Replace(name, " ", ".", -1)
-
-	thisRe := regexp.MustCompile("(?i)^" + clean + ".*S([0-9]+).*$")
-
-	return dirRule{
-		regex: thisRe,
-		name:  name,
-		score: 10,
-	}
-}
-
-func genTwo(name string) dirRule {
-	clean := strings.Replace(name, " ", ".", -1)
-
-	thisRe := regexp.MustCompile("(?i)" + clean + ".*S([0-9]+).*$")
-
-	return dirRule{
-		regex: thisRe,
-		name:  name,
-		score: 5,
-	}
-}
-
 func main() {
-
 	dirRules := makeDirRules(dirNames)
 	fileRules := makeFileRules(dirNames)
 
@@ -104,7 +66,7 @@ func main() {
 			log.Println("Classified:", name, season)
 
 		} else {
-			name, season, ep, err := classifyFile(filedir, fileRules)
+			name, season, ep, err := classifyFile(filedir, fileRules, skipRules)
 			if err != nil {
 				log.Fatalf("Error classifying file %s: %v", filedir.Name(), err)
 			}
@@ -155,21 +117,34 @@ func classifyDir(dirInfo os.FileInfo, rules []dirRule) (string, int, error) {
 
 }
 
-func classifyFile(fileInfo os.FileInfo, rules []dirRule) (string, int,
-	int, error) {
+func classifyFile(fileInfo os.FileInfo, rules []dirRule, skips []*regexp.Regexp) (string, int, int, error) {
+
+	name := fileInfo.Name()
+
+	for _, skip := range skips {
+		if skip.MatchString(name) {
+			return "", -1, -1, nil
+		}
+	}
 
 	showName := ""
 	season := -1
 	episode := -1
 
-	name := fileInfo.Name()
-
 	log.Printf("Processing File: %s\n", name)
 	for _, rule := range rules {
-		seasonStrs := rule.regex.FindStringSubmatch(name)
-		if len(seasonStrs) == 0 {
+		epStrs := rule.regex.FindStringSubmatch(name)
+		if len(epStrs) == 0 {
 			continue
 		}
+		if len(epStrs) != 3 {
+			return showName, season, episode, fmt.Errorf("Partial episode rule match %v", epStrs)
+
+		}
+
+		// now we have a real match ...
+
+		fmt.Println(epStrs)
 
 	}
 
