@@ -9,45 +9,73 @@ import (
 	"strconv"
 )
 
-type dirRule struct {
-	regex *regexp.Regexp
-	name  string
-	score int
+type ruleset struct {
+	name   string
+	sRules []string
+	eRules []string
 }
 
-func makeDirRules(names []string) []dirRule {
-	generators := []func(string) dirRule{
-		simpleGen,
-		genTwo,
-	}
-
-	return generate(generators, names)
+type compiledRules struct {
+	name    string
+	regexps []*regexp.Regexp
 }
 
-func generate(generators []func(string) dirRule, names []string) []dirRule {
-	ans := []dirRule{}
-	for _, name := range names {
-		for _, gen := range generators {
-			ans = append(ans, gen(name))
+
+func compileList(strings []string, name string) (*compiledRules, error) {
+	regexps := make([]*regexp.Regexp, len(strings))
+	for i, sRule := range strings {
+		regex, err := regexp.Compile(sRule)
+		if err != nil {
+			return nil, fmt.Errorf("error compiling regex: %s", sRule)
 		}
+		regexps[i] = regex
 	}
 
-	return ans
+	return &compiledRules{
+		name:    name,
+		regexps: regexps,
+	}, nil
 }
 
-func makeFileRules(names []string) []dirRule {
-	generators := []func(string) dirRule{
-		easyFileGen,
-	}
+func compileRules(allRules []ruleset) ([]*compiledRules, []*compiledRules, error) {
+	sRules := make([]*compiledRules, len(allRules))
+	eRules := make([]*compiledRules, len(allRules))
 
-	return generate(generators, names)
+	for i, ruleset := range allRules {
+		compR, err := compileList(ruleset.sRules, ruleset.name)
+		if err != nil {
+			return nil, nil, err
+		}
+		sRules[i] = compR
+
+		compR, err = compileList(ruleset.eRules, ruleset.name)
+		if err != nil {
+			return nil, nil, err
+		}
+		eRules[i] = compR
+	}
+	return sRules, eRules, nil
 }
 
 func main() {
-	dirRules := makeDirRules(dirNames)
-	fileRules := makeFileRules(dirNames)
 
 	path := "/data/btn-dump"
+
+	rules := []ruleset{
+		{
+			name:   "Butt",
+			sRules: []string{""},
+  			eRules: []string{""},
+		},
+		{
+			name:   "Face",
+			sRules: []string {""},
+			eRules: []string {""},
+		},
+	}
+
+	sCompiled, eCompiled, err := compileRules(rules)
+
 	fileDirs, err := ioutil.ReadDir(path)
 	if err != nil {
 		log.Fatal(err)
@@ -58,34 +86,30 @@ func main() {
 
 	for _, filedir := range fileDirs {
 		if filedir.IsDir() {
-			name, season, err := classifyDir(filedir, dirRules)
+			name, s, err := classifyDir(filedir, sCompiled)
 			if err != nil {
 				log.Fatalf("Error classifying dir %s: %v", filedir.Name(), err)
 			}
 
-			log.Println("Classified:", name, season)
+			log.Println("Classified:", name, s)
 
 		} else {
-			name, season, ep, err := classifyFile(filedir, fileRules, skipRules)
+			name, s, e, err := classifyFile(filedir, eCompiled)
 			if err != nil {
 				log.Fatalf("Error classifying file %s: %v", filedir.Name(), err)
 			}
 
-			log.Println("Classified:", name, season, ep)
+			log.Println("Classified:", name, s, e)
 		}
 
 	}
 }
 
-func classifyDir(dirInfo os.FileInfo, rules []dirRule) (string, int, error) {
+func classifyDir(dirInfo os.FileInfo, rules []*compiledRules) (string, int, error) {
 	showName := ""
 	season := -1
 
 	name := dirInfo.Name()
-
-	if name == "S02" {
-		return "Gossip Girl", 2, nil
-	}
 
 	log.Printf("Processing dir: %s\n", name)
 	for _, rule := range rules {
