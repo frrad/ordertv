@@ -20,7 +20,6 @@ type compiledRules struct {
 	regexps []*regexp.Regexp
 }
 
-
 func compileList(strings []string, name string) (*compiledRules, error) {
 	regexps := make([]*regexp.Regexp, len(strings))
 	for i, sRule := range strings {
@@ -61,20 +60,7 @@ func main() {
 
 	path := "/data/btn-dump"
 
-	rules := []ruleset{
-		{
-			name:   "Butt",
-			sRules: []string{""},
-  			eRules: []string{""},
-		},
-		{
-			name:   "Face",
-			sRules: []string {""},
-			eRules: []string {""},
-		},
-	}
-
-	sCompiled, eCompiled, err := compileRules(rules)
+	sCompiled, eCompiled, err := compileRules(globalRuleList)
 
 	fileDirs, err := ioutil.ReadDir(path)
 	if err != nil {
@@ -86,96 +72,125 @@ func main() {
 
 	for _, filedir := range fileDirs {
 		if filedir.IsDir() {
-			name, s, err := classifyDir(filedir, sCompiled)
+			name, s, match, err := classifyDir(filedir, sCompiled)
 			if err != nil {
 				log.Fatalf("Error classifying dir %s: %v", filedir.Name(), err)
 			}
 
-			log.Println("Classified:", name, s)
+			if match {
+				log.Println("Classified:", name, s)
+			} else {
+				log.Println("Couldn't classify:", filedir.Name())
+			}
 
 		} else {
-			name, s, e, err := classifyFile(filedir, eCompiled)
+			name, s, e, match, err := classifyFile(filedir, eCompiled)
 			if err != nil {
 				log.Fatalf("Error classifying file %s: %v", filedir.Name(), err)
 			}
 
-			log.Println("Classified:", name, s, e)
+			if match {
+				log.Println("Classified:", name, s, e)
+			} else {
+				log.Println("Couldn't Classify", filedir.Name())
+			}
 		}
 
 	}
 }
 
-func classifyDir(dirInfo os.FileInfo, rules []*compiledRules) (string, int, error) {
+func classifyDir(dirInfo os.FileInfo, ruleGroups []*compiledRules) (string, int, bool, error) {
 	showName := ""
 	season := -1
 
 	name := dirInfo.Name()
 
-	log.Printf("Processing dir: %s\n", name)
-	for _, rule := range rules {
-		seasonStrs := rule.regex.FindStringSubmatch(name)
-		if len(seasonStrs) == 0 {
-			continue
-		}
-		if len(seasonStrs) != 2 {
-			return "", 0, fmt.Errorf("Wrong number of match groups: %v", seasonStrs)
-		}
+	for _, grp := range ruleGroups {
+		for _, rule := range grp.regexps {
+			seasonStrs := rule.FindStringSubmatch(name)
+			if len(seasonStrs) == 0 {
+				continue
+			}
+			if len(seasonStrs) != 2 {
+				return "", -1, false, fmt.Errorf("Wrong number of match groups: %v", seasonStrs)
+			}
 
-		if showName != "" && showName != rule.name {
-			return "", 0, fmt.Errorf("Matched rules for two different shows: %s and %s", showName, rule.name)
-		}
-		showName = rule.name
-		season32, err := strconv.ParseInt(seasonStrs[1], 10, 32)
-		if err != nil {
-			return "", 0, fmt.Errorf("Can't parse int %s", seasonStrs[1])
-		}
+			if showName != "" && showName != grp.name {
+				return "", -1, false, fmt.Errorf("Matched rules for two different shows: %s and %s", showName, grp.name)
+			}
+			showName = grp.name
+			season32, err := strconv.ParseInt(seasonStrs[1], 10, 32)
+			if err != nil {
+				return "", -1, false, fmt.Errorf("Can't parse int %s", seasonStrs[1])
+			}
 
-		season = int(season32)
+			season = int(season32)
+		}
 	}
 
 	if showName == "" || season == -1 {
-		return showName, season, fmt.Errorf("No rule matched dir %s", name)
+		return "", -1, false, nil
 	}
 
-	return showName, season, nil
+	return showName, season, true, nil
 
 }
 
-func classifyFile(fileInfo os.FileInfo, rules []dirRule, skips []*regexp.Regexp) (string, int, int, error) {
+func classifyFile(fileInfo os.FileInfo, ruleGroups []*compiledRules) (string, int, int, bool, error) {
 
 	name := fileInfo.Name()
-
-	for _, skip := range skips {
-		if skip.MatchString(name) {
-			return "", -1, -1, nil
-		}
-	}
 
 	showName := ""
 	season := -1
 	episode := -1
 
-	log.Printf("Processing File: %s\n", name)
-	for _, rule := range rules {
-		epStrs := rule.regex.FindStringSubmatch(name)
-		if len(epStrs) == 0 {
-			continue
-		}
-		if len(epStrs) != 3 {
-			return showName, season, episode, fmt.Errorf("Partial episode rule match %v", epStrs)
+	for _, grp := range ruleGroups {
+		for _, rule := range grp.regexps {
+
+			epStrs := rule.FindStringSubmatch(name)
+			if len(epStrs) == 0 {
+				continue
+			}
+			if len(epStrs) != 3 {
+				return showName, season, episode, false, fmt.Errorf("Partial episode rule match %v", epStrs)
+
+			}
+
+			// now we have a real match ...
+
+			if showName != "" && showName != grp.name {
+				return "", -1, -1, false, fmt.Errorf("mismatch showname: %s, %s", showName, grp.name)
+			}
+			showName = grp.name
+
+			x, err := strconv.ParseInt(epStrs[1], 10, 32)
+			if err != nil {
+				return "", -1, -1, false, fmt.Errorf("Can't parse int %s", epStrs[1])
+			}
+			seas := int(x)
+
+			if season != -1 && season != seas {
+				return "", -1, -1, false, fmt.Errorf("mismatch season: %d, %d", season, seas)
+			}
+			season = seas
+
+			x, err = strconv.ParseInt(epStrs[2], 10, 32)
+			if err != nil {
+				return "", -1, -1, false, fmt.Errorf("Can't parse int %s", epStrs[2])
+			}
+			ep := int(x)
+
+			if episode != -1 && episode != ep {
+				return "", -1, -1, false, fmt.Errorf("mismatch episode: %d, %d", episode, ep)
+			}
+			episode = ep
 
 		}
-
-		// now we have a real match ...
-
-		fmt.Println(epStrs)
-
 	}
 
 	if showName == "" || season == -1 || episode == -1 {
-		return showName, season, episode, fmt.Errorf("No rule matched file %s", name)
+		return "", -1, -1, false, nil
 	}
 
-	return showName, season, episode, fmt.Errorf("No rule matched file %s", name)
-
+	return showName, season, episode, true, nil
 }
